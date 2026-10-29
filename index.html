@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Elk Spot Planner</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Elk Spots">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#34502f">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<style>html,body{margin:0;height:100%;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}[hidden]{display:none!important}*{box-sizing:border-box}body{-webkit-user-select:none;user-select:none}input,select,textarea{-webkit-user-select:text;user-select:text}</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* Layout: full-screen map; floating filter bar on top, zoom on the side, tap-info sheet at the bottom, menu drawer from the right */
+:root{
+  --bg:#e9ece0;--panel:#fbfbf6;--ink:#232a1c;--muted:#5f6852;--line:#d1d6c1;--chip:#e3e7d6;
+  --timber:#34502f;--blaze:#d9501a;--sky:#5f87a6;--good:#3d7a3a;--maybe:#b8800f;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif;--body:"Source Sans 3",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;
+  --shadow:0 2px 10px rgba(30,40,20,.18);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121610;--panel:#1c2118;--ink:#e7eadd;--muted:#a5ad96;--line:#343c2d;--chip:#262d21;--timber:#2b4127;--blaze:#ff7a3d;--sky:#8fb0c9;--good:#86c47f;--maybe:#e2b04a;--shadow:0 2px 12px rgba(0,0,0,.5);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121610;--panel:#1c2118;--ink:#e7eadd;--muted:#a5ad96;--line:#343c2d;--chip:#262d21;--timber:#2b4127;--blaze:#ff7a3d;--sky:#8fb0c9;--good:#86c47f;--maybe:#e2b04a;--shadow:0 2px 12px rgba(0,0,0,.5);color-scheme:dark}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.4;overflow:hidden}
+button{font:inherit;cursor:pointer;color:inherit}
+:focus-visible{outline:3px solid var(--blaze);outline-offset:2px}
+#map{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;background:var(--bg)}
+.top{position:fixed;top:0;left:0;right:0;z-index:5;pointer-events:none;padding-top:calc(env(safe-area-inset-top,0px) + 10px);padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px));display:grid;gap:8px}
+.top>*{pointer-events:auto}
+.bar1{display:flex;gap:8px;align-items:center}
+.brand{flex:1;min-width:0;background:var(--timber);color:#f3f4ea;border-radius:10px;padding:6px 12px;box-shadow:var(--shadow);display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.brand b{font-family:var(--display);font-size:20px;text-transform:uppercase;letter-spacing:.03em;line-height:1.1}
+.brand span{font-family:var(--mono);font-size:11px;opacity:.85}
+.iconbtn{width:44px;height:44px;flex:none;border-radius:10px;border:1px solid var(--line);background:var(--panel);box-shadow:var(--shadow);font-size:20px;font-weight:700;display:grid;place-items:center}
+.scrollx{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.scrollx::-webkit-scrollbar{display:none}
+.chip{flex:none;display:inline-flex;align-items:center;gap:6px;height:40px;padding:0 12px;border-radius:20px;border:2px solid var(--line);background:var(--panel);font-weight:600;font-size:14px;box-shadow:var(--shadow);white-space:nowrap}
+.chip .dot{width:11px;height:11px;border-radius:50%}
+.chip[aria-pressed="false"]{opacity:.55;box-shadow:none}
+.chip[aria-pressed="true"]{border-color:var(--ink)}
+.seg{display:inline-flex;background:var(--panel);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);overflow:hidden;width:max-content}
+.seg button{height:38px;padding:0 14px;border:0;background:transparent;font-weight:600;font-size:14px}
+.seg button[aria-pressed="true"]{background:var(--blaze);color:#fff}
+.zoom{position:fixed;z-index:5;right:max(12px,env(safe-area-inset-right,0px));top:50%;transform:translateY(-50%);display:grid;gap:8px}
+.zoom .iconbtn{font-size:22px}
+#gps[aria-pressed="true"]{background:var(--sky);color:#fff;border-color:var(--sky)}
+.offline{position:fixed;z-index:5;left:max(12px,env(safe-area-inset-left,0px));bottom:calc(env(safe-area-inset-bottom,0px) + 128px);font-size:12px;font-weight:600;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px 10px;box-shadow:var(--shadow)}
+.sheet{position:fixed;z-index:6;left:0;right:0;bottom:0;max-height:48%;overflow-y:auto;overscroll-behavior:contain;background:var(--panel);border-radius:16px 16px 0 0;box-shadow:0 -4px 20px rgba(20,30,10,.22);padding-top:6px;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 14px);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+@media (min-width:760px){.sheet{left:auto;right:16px;bottom:16px;width:400px;border-radius:14px;max-height:calc(100% - 140px)}}
+.grab{width:40px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 10px}
+.hint{font-size:15px;color:var(--muted);text-align:center;padding:2px 0 4px}
+.shead{display:flex;justify-content:space-between;align-items:start;gap:10px}
+.place{font-weight:700;font-size:18px;line-height:1.2}
+.sub{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:2px}
+.x{width:36px;height:36px;border-radius:8px;border:1px solid var(--line);background:var(--chip);font-size:18px;flex:none}
+.pbars{display:grid;gap:6px;margin:10px 0}
+.pbar{display:grid;grid-template-columns:140px 1fr 64px;gap:8px;align-items:center;font-size:14px}
+.pbar .tr{height:12px;background:var(--chip);border-radius:6px;overflow:hidden}
+.pbar .tr i{display:block;height:100%;border-radius:6px}
+.pbar b{text-align:right;font-size:13px}
+@media (max-width:400px){.pbar{grid-template-columns:118px 1fr 58px;font-size:13px}}
+.verdict{display:flex;gap:10px;align-items:center;padding:10px 12px;border-radius:10px;background:var(--bg);border-left:6px solid var(--line)}
+.verdict .big{font-family:var(--display);font-size:1.45rem;text-transform:uppercase;letter-spacing:.03em;line-height:1;white-space:nowrap}
+.verdict .why{font-size:13.5px;color:var(--muted)}
+.verdict.go{border-color:var(--good)}.verdict.go .big{color:var(--good)}
+.verdict.maybe{border-color:var(--maybe)}.verdict.maybe .big{color:var(--maybe)}
+.verdict.skip{border-color:var(--muted)}.verdict.skip .big{color:var(--muted)}
+.acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.btn{min-height:44px;padding:0 12px;border-radius:9px;border:2px solid var(--blaze);background:var(--blaze);color:#fff;font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.btn.ghost{background:transparent;color:var(--blaze)}
+.btn.quiet{background:transparent;color:var(--ink);border-color:var(--line)}
+details{margin-top:12px;border-top:1px solid var(--line);padding-top:8px}
+summary{font-family:var(--display);font-size:16px;text-transform:uppercase;letter-spacing:.04em;min-height:40px;display:flex;align-items:center;cursor:pointer}
+.q{font-size:13px;color:var(--muted);font-weight:600;margin:10px 0 6px}
+.covers{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.cover{text-align:left;padding:7px 9px;border-radius:8px;border:2px solid var(--line);background:var(--chip);min-height:44px}
+.cover b{display:block;font-size:14px;line-height:1.2}
+.cover span{font-size:12px;color:var(--muted);line-height:1.2;display:block}
+.cover[aria-pressed="true"]{border-color:var(--blaze);background:var(--panel)}
+.yn{display:flex;gap:6px}
+.yn button{flex:1;height:40px;border-radius:8px;border:2px solid var(--line);background:var(--chip);font-weight:600;font-size:14px}
+.yn button[aria-pressed="true"]{border-color:var(--blaze);background:var(--panel)}
+.drawer{position:fixed;z-index:8;top:0;right:0;bottom:0;width:min(380px,100%);background:var(--panel);box-shadow:-4px 0 20px rgba(0,0,0,.25);overflow-y:auto;padding-top:calc(env(safe-area-inset-top,0px) + 12px);padding-bottom:calc(env(safe-area-inset-bottom,0px) + 20px);padding-left:16px;padding-right:max(16px,env(safe-area-inset-right,0px))}
+.scrim{position:fixed;inset:0;z-index:7;background:rgba(0,0,0,.35)}
+.drawer h2{font-family:var(--display);font-size:1.2rem;text-transform:uppercase;letter-spacing:.05em;margin:18px 0 8px}
+.drawer h2:first-of-type{margin-top:4px}
+.suntimes{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-family:var(--mono);font-size:15px;font-variant-numeric:tabular-nums}
+.suntimes b{display:block;font-family:var(--display);font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.f{display:grid;gap:3px;font-size:12px;color:var(--muted);font-weight:600;margin-top:8px}
+.f select,.f input{height:42px;font-family:var(--body);font-size:15px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:0 8px}
+.f input{font-family:var(--mono);font-size:14px}
+.info{font-size:14px;background:var(--bg);border-radius:8px;padding:10px 12px;margin-top:8px}
+.list{display:grid}
+.list button{display:flex;justify-content:space-between;gap:8px;align-items:center;text-align:left;background:transparent;border:0;border-top:1px solid var(--line);padding:10px 0;min-height:44px;font-size:15px}
+.list button small{font-family:var(--mono);color:var(--muted);font-size:12px}
+.note{font-size:13px;color:var(--muted)}
+.links{display:grid;gap:6px;font-weight:600;font-size:14px}
+.links a{color:var(--sky)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--muted);margin-top:4px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+.toast{position:fixed;z-index:9;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 120px);background:var(--ink);color:var(--panel);padding:9px 14px;border-radius:8px;font-size:14px;max-width:calc(100% - 32px)}
+@media (prefers-reduced-motion:no-preference){.sheet{transition:transform .2s ease}}
+</style>
+</head>
+<body>
+<canvas id="map" aria-label="Map of GMU 113. Tap anywhere to see which elk feed plants grow there. Drag to move, pinch to zoom."></canvas>
+
+<div class="top">
+  <div class="bar1">
+    <div class="brand"><b>Elk Spot Planner</b><span>GMU 113 · National forest only</span></div>
+    <button class="iconbtn" id="menuBtn" aria-label="Open menu">☰</button>
+  </div>
+  <div class="scrollx" id="plantChips" role="group" aria-label="Plants to show"></div>
+  <div class="seg" id="timeSeg" role="group" aria-label="Time of day"></div>
+</div>
+
+<div class="zoom">
+  <button class="iconbtn" id="zin" aria-label="Zoom in">+</button>
+  <button class="iconbtn" id="zout" aria-label="Zoom out">−</button>
+  <button class="iconbtn" id="gps" aria-label="Show my location" aria-pressed="false" style="font-size:20px">◎</button>
+  <button class="iconbtn" id="zreset" aria-label="Show whole unit" style="font-size:16px">⤢</button>
+</div>
+
+<div class="offline" id="offline" hidden>Offline · map still works</div>
+<div class="sheet" id="sheet" aria-live="polite"></div>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="Menu">
+  <div style="display:flex;justify-content:space-between;align-items:center"><h2>Today</h2><button class="x" id="closeMenu" aria-label="Close menu">✕</button></div>
+  <div class="suntimes" id="suntimes"></div>
+  <div class="info" id="windTip"></div>
+  <label class="f" for="date">Date<input id="date" type="date"></label>
+  <label class="f" for="wind">Wind blowing from<select id="wind"><option>N</option><option>NE</option><option>E</option><option>SE</option><option>S</option><option selected>SW</option><option>W</option><option>NW</option></select></label>
+  <label class="f" for="snow">Snow<select id="snow"><option value="none">None</option><option value="some" selected>Some up high</option><option value="deep">Deep, pushing elk down</option></select></label>
+  <label class="f" for="pressure">Hunter pressure<select id="pressure"><option value="low">Light</option><option value="med">Moderate</option><option value="high" selected>Heavy (rifle season)</option></select></label>
+
+  <h2>Where are you?</h2>
+  <label class="f" for="myloc">Paste your coordinates or a Google Maps link<input id="myloc" inputmode="decimal" placeholder="48.62, -117.30" autocomplete="off"></label>
+  <p class="note" id="locNote">Easiest: tap ◎ on the map for live GPS. It works with no cell service. Or paste coordinates here.</p>
+
+  <h2>Saved spots</h2>
+  <div class="list" id="savedList"></div>
+
+  <h2>Best areas right now</h2>
+  <div class="list" id="bestList"></div>
+
+  <h2>Map key</h2>
+  <div class="legend" id="legend"></div>
+
+  <h2>Real sightings</h2>
+  <div class="links" id="inat"></div>
+  <p class="note" style="margin-top:14px">Plant odds are modeled from habitat (fireweed in cuts and burns, dandelion on roads, landings and pastures, sticky geranium on dry open slopes, false Solomon's seal in moist cedar bottoms), not field counts. By late October most of these are cured, but elk still feed in the same openings and bed in the timber beside them. The unit line and the national forest area (Colville National Forest and the Salmo-Priest Wilderness) are approximate, and the forest has private inholdings. Turn on onX's land ownership layer to confirm the exact line, and check gates, road closures and WDFW rules before you go.</p>
+</aside>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const store={get(k,d){try{const v=JSON.parse(localStorage.getItem(k));return v==null?d:v}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+function toast(t){const el=$("toast");el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,2000)}
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// ---------- data ----------
+const GMU=[[49.0,-117.352],[49.0,-117.032],[48.18,-117.039],[48.183,-117.05],[48.21,-117.12],[48.25,-117.2],[48.31,-117.275],[48.36,-117.29],[48.42,-117.29],[48.50,-117.31],[48.58,-117.33],[48.66,-117.38],[48.745,-117.41],[48.80,-117.40],[48.862,-117.37],[48.92,-117.36],[49.0,-117.352]];
+const TOWNS=[["Newport",48.18,-117.043],["Usk",48.31,-117.281],["Cusick",48.335,-117.296],["Ione",48.743,-117.416],["Metaline Falls",48.862,-117.366],["Boundary Dam",48.988,-117.35]];
+const PLANTS={
+ d:{name:"Dandelion",col:"#e0a800",inat:"Taraxacum%20officinale"},
+ g:{name:"Wild geranium",col:"#8a5ad8",inat:"Geranium%20viscosissimum"},
+ f:{name:"Fireweed",col:"#d6336c",inat:"Chamaenerion%20angustifolium"},
+ s:{name:"False Solomon's seal",col:"#2f9e6e",inat:"Maianthemum%20racemosum"}};
+const ACCESS={nf:"National forest",wild:"Wilderness · foot or horse only",tc:"Timber company · gates often locked",mix:"Mixed ownership · check onX",pvt:"Mostly private / tribal · permission needed"};
+// Approximate national forest block inside GMU 113 (Colville NF / Salmo-Priest). Has private inholdings; confirm in onX.
+const NF=[[49.0,-117.30],[49.0,-117.032],[48.52,-117.035],[48.52,-117.24],[48.60,-117.27],[48.68,-117.315],[48.76,-117.335],[48.84,-117.32],[48.92,-117.31],[49.0,-117.30]];
+const ZONES=[
+ {n:"Forest Service cut units, south end",lat:48.57,lon:-117.12,r:5,w:{f:.9,d:.6,g:.3},el:"mid",ac:"nf",open:.75,bed:.6,remote:.5},
+ {n:"Logging units, mid-unit",lat:48.66,lon:-117.24,r:4,w:{f:.85,d:.5,g:.35},el:"mid",ac:"nf",open:.7,bed:.6,remote:.5},
+ {n:"Open dry slopes, west side",lat:48.60,lon:-117.225,r:3.5,w:{g:.9,f:.3,d:.2},el:"mid",ac:"nf",open:.7,bed:.5,remote:.5},
+ {n:"Dry ridges above Ione",lat:48.71,lon:-117.29,r:3.5,w:{g:.8,d:.3},el:"mid",ac:"nf",open:.6,bed:.5,remote:.6},
+ {n:"Moist cedar bottoms",lat:48.64,lon:-117.15,r:5,w:{s:1,f:.3},el:"mid",ac:"nf",open:.3,bed:1,remote:.7},
+ {n:"North-facing creek drainages",lat:48.73,lon:-117.12,r:5,w:{s:.95,f:.3},el:"high",ac:"nf",open:.2,bed:1,remote:.8},
+ {n:"Sullivan Lake & Creek",lat:48.81,lon:-117.25,r:5,w:{s:.9,d:.6,f:.4},el:"mid",ac:"nf",open:.4,bed:.8,remote:.4},
+ {n:"Roads & landings east of Sullivan",lat:48.79,lon:-117.17,r:4,w:{d:.75,f:.7},el:"mid",ac:"nf",open:.7,bed:.5,remote:.35},
+ {n:"Salmo-Priest high openings",lat:48.92,lon:-117.11,r:6,w:{f:.8,g:.5,s:.3},el:"high",ac:"wild",open:.7,bed:.8,remote:1},
+ {n:"Upper crest avalanche chutes",lat:48.97,lon:-117.08,r:4,w:{f:.7,g:.4},el:"high",ac:"wild",open:.8,bed:.6,remote:1},
+ {n:"Lower Salmo country",lat:48.95,lon:-117.18,r:5,w:{s:.8,f:.4},el:"high",ac:"wild",open:.3,bed:.9,remote:.9}];
+const COVER={
+ fresh:{t:"Fresh clearcut",see:"Bare brown, slash piles",w:{f:.75,d:.7,g:.35,s:.05},open:.9,bed:.1},
+ regrow:{t:"Older cut",see:"Patchy light green, straight edges",w:{f:.95,g:.45,d:.4,s:.15},open:.8,bed:.3},
+ burn:{t:"Burn",see:"Gray or black snags",w:{f:1,g:.55,d:.3,s:.1},open:.85,bed:.2},
+ meadow:{t:"Meadow / park",see:"Smooth tan or light green",w:{d:.85,g:.9,f:.3,s:.05},open:1,bed:.1},
+ road:{t:"Road / landing / pasture",see:"Gravel lines, cleared pads",w:{d:1,f:.55,g:.3,s:0},open:.7,bed:0},
+ opentimber:{t:"Open dry timber",see:"Ground visible between trees",w:{g:.85,d:.35,f:.3,s:.25},open:.6,bed:.4},
+ dark:{t:"Dark timber",see:"Solid dark canopy",w:{s:.7,f:.1,g:.1,d:.05},open:.1,bed:1},
+ creek:{t:"Creek / wet cedar",see:"Dark strip along a stream",w:{s:1,f:.35,g:.15,d:.15},open:.3,bed:.9},
+ chute:{t:"Avalanche chute",see:"Light strips down steep slope",w:{f:.7,g:.45,d:.1,s:.1},open:.6,bed:.2}};
+const LAT=48.6,LON=-117.2,KX=Math.cos(LAT*Math.PI/180);
+const TIMES={dawn:"First light",midday:"Midday",evening:"Evening"};
+
+// ---------- state ----------
+const sel=store.get("elkPlants",{d:true,g:true,f:true,s:true});
+let when="dawn",me=null,saved=store.get("elkSaved",[]);
+let pt=null; // {lat,lon,name?,cover,timber,road}
+
+// ---------- geo + sun ----------
+function hav(a1,o1,a2,o2){const R=3958.8,t=x=>x*Math.PI/180;const h=Math.sin(t(a2-a1)/2)**2+Math.cos(t(a1))*Math.cos(t(a2))*Math.sin(t(o2-o1)/2)**2;return 2*R*Math.asin(Math.sqrt(h))}
+function bearing(a1,o1,a2,o2){const t=x=>x*Math.PI/180;const y=Math.sin(t(o2-o1))*Math.cos(t(a2)),x=Math.cos(t(a1))*Math.sin(t(a2))-Math.sin(t(a1))*Math.cos(t(a2))*Math.cos(t(o2-o1));return["N","NE","E","SE","S","SW","W","NW"][Math.round(((Math.atan2(y,x)*180/Math.PI+360)%360)/45)%8]}
+function pacificOffset(ds){const d=new Date(ds+"T12:00:00Z"),y=d.getUTCFullYear();const nth=(m,n)=>{const f=new Date(Date.UTC(y,m,1));return Date.UTC(y,m,1+(7-f.getUTCDay())%7+7*(n-1))};return d>=nth(2,2)&&d<nth(10,1)?-7:-8}
+function sunTimes(ds){const tz=pacificOffset(ds);const d=new Date(ds+"T12:00:00Z");const N=Math.floor((d-Date.UTC(d.getUTCFullYear(),0,0))/864e5);const g=2*Math.PI/365*(N-1);
+  const eq=229.18*(.000075+.001868*Math.cos(g)-.032077*Math.sin(g)-.014615*Math.cos(2*g)-.040849*Math.sin(2*g));
+  const dec=.006918-.399912*Math.cos(g)+.070257*Math.sin(g)-.006758*Math.cos(2*g)+.000907*Math.sin(2*g)-.002697*Math.cos(3*g)+.00148*Math.sin(3*g);
+  const r=LAT*Math.PI/180;const cosH=Math.cos(90.833*Math.PI/180)/(Math.cos(r)*Math.cos(dec))-Math.tan(r)*Math.tan(dec);
+  const H=Math.acos(Math.max(-1,Math.min(1,cosH)))*180/Math.PI;const noon=720-4*LON-eq+tz*60;return{rise:noon-4*H,set:noon+4*H}}
+const fmt=m=>{m=((Math.round(m)%1440)+1440)%1440;let h=Math.floor(m/60),mm=String(m%60).padStart(2,"0");const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+mm+" "+ap};
+const nowMin=()=>{const n=new Date();return n.getHours()*60+n.getMinutes()};
+const todayStr=()=>{const n=new Date();return n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0")+"-"+String(n.getDate()).padStart(2,"0")};
+function inPoly(poly,la,lo){let c=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){const[a1,o1]=poly[i],[a2,o2]=poly[j];if((a1>la)!==(a2>la)&&lo<(o2-o1)*(la-a1)/(a2-a1)+o1)c=!c}return c}
+const inGMU=(la,lo)=>inPoly(GMU,la,lo),inNF=(la,lo)=>inPoly(NF,la,lo)&&inGMU(la,lo);
+
+// ---------- model ----------
+function zoneWeight(z,la,lo){const dk=Math.hypot((la-z.lat)*111,(lo-z.lon)*111*KX);return Math.exp(-((dk/(z.r*1.1))**2))}
+function siteAt(la,lo){ // plant odds + blended terrain traits for any point
+  const odds={};for(const k in PLANTS){let v=0;for(const z of ZONES)v=Math.max(v,(z.w[k]||0)*zoneWeight(z,la,lo));odds[k]=v}
+  let ws=0,open=0,bed=0,remote=0,near=null,nd=1e9;
+  for(const z of ZONES){const w=zoneWeight(z,la,lo)+1e-6;ws+=w;open+=w*z.open;bed+=w*z.bed;remote+=w*z.remote;const d=hav(la,lo,z.lat,z.lon);if(d<nd){nd=d;near=z}}
+  return{odds,open:open/ws,bed:bed/ws,remote:remote/ws,near,nd}}
+const active=()=>{const k=Object.keys(PLANTS).filter(k=>sel[k]);return k.length?k:Object.keys(PLANTS)};
+const lv=v=>v>=.65?"High":v>=.4?"Good":v>=.18?"Some":"Unlikely";
+function evaluate(p){
+  const s=siteAt(p.lat,p.lon),c=p.cover?COVER[p.cover]:null;
+  const odds={};for(const k in PLANTS)odds[k]=c?.65*c.w[k]+.35*s.odds[k]:s.odds[k];
+  let open=c?c.open:s.open,bed=c?c.bed:s.bed;
+  if(p.timber===1)bed=Math.max(bed,.8);if(p.timber===0)bed*=.5;
+  const feed=Math.max(...active().map(k=>odds[k]));
+  const phase=when==="dawn"?.6*open+.4*bed:when==="evening"?.85*open+.15*bed:bed;
+  const pw={low:.08,med:.15,high:.22}[$("pressure").value];let remote=s.remote;if(p.road===1)remote=Math.min(remote,.1);if(p.road===0)remote=Math.max(remote,.8);
+  let sc=100*(.5*feed+(.5-pw)*phase+pw*remote);
+  const snow=$("snow").value,el=s.near.el;if(snow==="deep"&&el==="high")sc-=15;if(snow==="deep"&&el==="low")sc+=5;
+  const inside=inGMU(p.lat,p.lon),nf=inNF(p.lat,p.lon);if(!inside||!nf)sc=Math.min(sc,25);
+  sc=Math.max(0,Math.min(100,Math.round(sc)));
+  const why=[];const good=active().filter(k=>odds[k]>=.4).map(k=>PLANTS[k].name.toLowerCase());
+  why.push(good.length?good.join(", ")+" likely":"little of your chosen feed");
+  if(when==="midday")why.push(bed>=.7?"good bedding cover":"not much bedding cover for midday");
+  else why.push(open>=.65?"open feeding ground for "+TIMES[when].toLowerCase():"mostly cover, so hunt its edges");
+  if(remote<.3)why.push("close to roads");else if(remote>.7)why.push("far from roads");
+  if(inside&&!nf){why.length=0;why.push("likely private, tribal or timber company land, not national forest")}
+  if(!inside){why.length=0;why.push("outside GMU 113, so check your tag and the regulations")}
+  const v=sc>=72?["go","Go here"]:sc>=52?["maybe","Maybe"]:["skip","Skip"];
+  return{s,odds,sc,v,why,inside,nf}}
+
+// ---------- map ----------
+const BB={s:48.15,n:49.03,w:-117.47,e:-116.99};
+const HOME={cx:-117.18,cy:48.76,z:1.7};const view={...HOME};let P=null;
+function proj(W,H){const topPad=130,botPad=90;const base=Math.min((W-40)/((BB.e-BB.w)*KX),(H-topPad-botPad)/(BB.n-BB.s));const s=base*view.z;const cyPx=topPad+(H-topPad-botPad)/2;
+  return{s,x:lon=>W/2+(lon-view.cx)*KX*s,y:lat=>cyPx-(lat-view.cy)*s,lon:x=>view.cx+(x-W/2)/(KX*s),lat:y=>view.cy-(y-cyPx)/s,kmPx:s/111}}
+function drawMap(){
+  const cv=$("map"),dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;
+  const g=cv.getContext("2d");g.scale(dpr,dpr);const cs=getComputedStyle(document.documentElement),col=n=>cs.getPropertyValue(n).trim();
+  P=proj(W,H);g.fillStyle=col("--bg");g.fillRect(0,0,W,H);
+  g.strokeStyle=col("--line");g.lineWidth=1;const step=view.z>=4?.02:view.z>=2?.05:.1;
+  for(let la=Math.ceil(P.lat(H)/step)*step;la<=P.lat(0);la+=step){const y=P.y(la);g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke()}
+  for(let lo=Math.ceil(P.lon(0)/step)*step;lo<=P.lon(W);lo+=step){const x=P.x(lo);g.beginPath();g.moveTo(x,0);g.lineTo(x,H);g.stroke()}
+  const path=()=>{g.beginPath();GMU.forEach(([a,o],i)=>i?g.lineTo(P.x(o),P.y(a)):g.moveTo(P.x(o),P.y(a)));g.closePath()};
+  // non-forest part of the unit: grey with hatching
+  path();g.fillStyle=col("--chip");g.fill();
+  g.save();path();g.clip();g.strokeStyle=col("--line");g.lineWidth=1;for(let x=-H;x<W;x+=12){g.beginPath();g.moveTo(x,H);g.lineTo(x+H,0);g.stroke()}g.restore();
+  const nfPath=()=>{g.beginPath();NF.forEach(([a,o],i)=>i?g.lineTo(P.x(o),P.y(a)):g.moveTo(P.x(o),P.y(a)));g.closePath()};
+  g.save();path();g.clip();nfPath();g.fillStyle=col("--panel");g.fill();g.restore();
+  g.save();path();g.clip();nfPath();g.clip();
+  for(const k of active())for(const z of ZONES){const w=z.w[k];if(!w)continue;const x=P.x(z.lon),y=P.y(z.lat),rad=z.r*P.kmPx*1.6;
+    const gr=g.createRadialGradient(x,y,0,x,y,rad);gr.addColorStop(0,PLANTS[k].col);gr.addColorStop(1,"rgba(0,0,0,0)");g.globalAlpha=.55*w;g.fillStyle=gr;g.beginPath();g.arc(x,y,rad,0,7);g.fill()}
+  g.globalAlpha=1;g.restore();
+  g.save();path();g.clip();nfPath();g.strokeStyle=col("--good");g.lineWidth=2.5;g.stroke();g.restore();
+  if(view.z<3){g.font="600 13px "+col("--display");g.textAlign="center";g.fillStyle=col("--muted");g.fillText("NOT NATIONAL FOREST",P.x(-117.17),P.y(48.36))}
+  path();g.strokeStyle=col("--blaze");g.lineWidth=2;g.setLineDash([7,5]);g.stroke();g.setLineDash([]);
+  g.strokeStyle=col("--sky");g.lineWidth=Math.min(8,3+view.z*.5);g.lineJoin="round";g.beginPath();GMU.slice(2).forEach(([a,o],i)=>i?g.lineTo(P.x(o),P.y(a)):g.moveTo(P.x(o),P.y(a)));g.stroke();
+  g.fillStyle=col("--sky");g.beginPath();g.ellipse(P.x(-117.278),P.y(48.815),Math.max(2,1.3*P.kmPx),Math.max(4,3.4*P.kmPx),0,0,7);g.fill();
+  g.font="600 12px "+col("--body");
+  const label=(t,x,y,al)=>{g.textAlign=al;g.lineWidth=3;g.strokeStyle=col("--panel");g.strokeText(t,x,y);g.fillStyle=col("--ink");g.fillText(t,x,y)};
+  for(const[n,a,o]of TOWNS){const x=P.x(o),y=P.y(a);g.fillStyle=col("--ink");g.beginPath();g.arc(x,y,3,0,7);g.fill();label(n,x-6,y+4,"right")}
+  const gx=P.x(-117.126),gy=P.y(48.927);g.fillStyle=col("--ink");g.beginPath();g.moveTo(gx,gy-7);g.lineTo(gx-6,gy+4);g.lineTo(gx+6,gy+4);g.closePath();g.fill();label("Gypsy Peak 7,320′",gx+8,gy+4,"left");
+  label("Sullivan Lake",P.x(-117.262),P.y(48.82),"left");
+  if(view.z>=2.2){g.font="11px "+col("--body");for(const z of ZONES){g.globalAlpha=.75;label(z.n,P.x(z.lon),P.y(z.lat),"center")}g.globalAlpha=1}
+  g.font="600 13px "+col("--display");g.fillStyle=col("--muted");g.textAlign="center";g.fillText("CANADA",P.x(-117.2),P.y(49.0)-8);
+  g.save();g.translate(P.x(-117.032)+14,P.y(48.6));g.rotate(Math.PI/2);g.fillText("IDAHO",0,0);g.restore();
+  g.font="18px "+col("--body");g.textAlign="center";for(const s of saved){g.lineWidth=3;g.strokeStyle=col("--panel");g.strokeText("★",P.x(s.lon),P.y(s.lat)+6);g.fillStyle=col("--blaze");g.fillText("★",P.x(s.lon),P.y(s.lat)+6)}
+  if(me){const x=P.x(me[1]),y=P.y(me[0]);g.fillStyle=col("--sky");g.strokeStyle="#fff";g.lineWidth=3;g.beginPath();g.arc(x,y,8,0,7);g.fill();g.stroke()}
+  if(pt){const x=P.x(pt.lon),y=P.y(pt.lat);g.fillStyle=col("--blaze");g.strokeStyle="#fff";g.lineWidth=2.5;
+    g.beginPath();g.moveTo(x,y);g.bezierCurveTo(x-11,y-14,x-11,y-30,x,y-30);g.bezierCurveTo(x+11,y-30,x+11,y-14,x,y);g.closePath();g.fill();g.stroke();
+    g.fillStyle="#fff";g.beginPath();g.arc(x,y-21,4,0,7);g.fill()}
+  // scale bar bottom-left above sheet
+  const mi=view.z>=4?.5:view.z>=2?1:5,sb=mi*1.609*P.kmPx,by=H-110;g.strokeStyle=col("--ink");g.lineWidth=3;g.beginPath();g.moveTo(14,by);g.lineTo(14+sb,by);g.stroke();
+  g.fillStyle=col("--ink");g.font="11px "+col("--mono");g.textAlign="left";g.fillText(mi+" mi",14,by-6)}
+
+// ---------- sheet ----------
+function renderSheet(){
+  const sh=$("sheet");
+  if(!pt){sh.innerHTML=`<div class="grab"></div><div class="hint">Tap anywhere in the white national forest area to see what's growing there</div>`;return}
+  const e=evaluate(pt),la=pt.lat,lo=pt.lon,ll=la.toFixed(5)+","+lo.toFixed(5);
+  const dist=me&&hav(me[0],me[1],la,lo)>=.05?` · ${hav(me[0],me[1],la,lo).toFixed(1)} mi ${bearing(me[0],me[1],la,lo)} of you`:"";
+  const title=pt.name||(!e.inside?"Outside GMU 113":!e.nf?"Not national forest":e.s.nd<2.5?"Near "+e.s.near.n:"This spot");
+  const own=!e.inside?"":e.nf?ACCESS[e.s.near.ac]+" (approximate, confirm in onX)":"Likely private, tribal or timber company. Tap inside the white area.";
+  const isSaved=saved.some(s=>Math.abs(s.lat-la)<1e-4&&Math.abs(s.lon-lo)<1e-4);
+  sh.innerHTML=`<div class="grab"></div>
+  <div class="shead"><div><div class="place">${esc(title)}</div><div class="sub">${la.toFixed(5)}, ${lo.toFixed(5)}${dist}</div>${own?`<div class="sub" style="font-family:var(--body);${e.nf?"color:var(--good);font-weight:600":""}">${own}</div>`:""}</div><button class="x" data-act="close" aria-label="Close">✕</button></div>
+  <div class="pbars">${Object.keys(PLANTS).sort((a,b)=>e.odds[b]-e.odds[a]).map(k=>`<div class="pbar" style="opacity:${sel[k]&&e.nf?1:.45}"><span>${PLANTS[k].name}</span><div class="tr"><i style="width:${Math.max(3,Math.round(e.odds[k]*100))}%;background:${PLANTS[k].col}"></i></div><b>${lv(e.odds[k])}</b></div>`).join("")}</div>
+  <div class="verdict ${e.v[0]}"><div><div class="big">${e.v[1]}</div><div class="sub">${e.sc}/100 · ${TIMES[when]}</div></div><div class="why">${e.why.join(" · ")}.</div></div>
+  <div class="acts">
+    <a class="btn" href="https://www.google.com/maps/@?api=1&map_action=map&center=${la},${lo}&zoom=16&basemap=satellite" target="_blank" rel="noopener">Satellite ↗</a>
+    <a class="btn ghost" href="https://www.google.com/maps/dir/?api=1&destination=${la},${lo}" target="_blank" rel="noopener">Directions ↗</a>
+    <button class="btn quiet" data-act="save">${isSaved?"★ Saved":"☆ Save"}</button>
+    <button class="btn quiet" data-act="copy" data-v="${la.toFixed(5)}, ${lo.toFixed(5)}">Copy coords</button>
+  </div>
+  <details id="sharpen"${pt.cover||pt.timber!=null||pt.road!=null?" open":""}><summary>Looked on satellite? Sharpen it</summary>
+    <div class="q">What's at the pin?</div>
+    <div class="covers">${Object.entries(COVER).map(([k,c])=>`<button class="cover" data-cover="${k}" aria-pressed="${pt.cover===k}"><b>${c.t}</b><span>${c.see}</span></button>`).join("")}</div>
+    <div class="q">Thick timber within 300 yards?</div><div class="yn">${["Yes","No"].map((t,i)=>`<button data-yn="timber:${1-i}" aria-pressed="${pt.timber===1-i}">${t}</button>`).join("")}</div>
+    <div class="q">Open road within half a mile?</div><div class="yn">${["Yes","No"].map((t,i)=>`<button data-yn="road:${1-i}" aria-pressed="${pt.road===1-i}">${t}</button>`).join("")}</div>
+  </details>`}
+function setPoint(la,lo,name){pt={lat:la,lon:lo,name,cover:null,timber:null,road:null};renderSheet();$("sheet").scrollTop=0;
+  // keep the pin visible above the sheet
+  const sh=$("sheet").getBoundingClientRect(),y=P.y(la);
+  const topB=document.querySelector(".top").getBoundingClientRect().bottom,target=(topB+sh.top)/2+15;
+  if(innerWidth<760&&(y>sh.top-30||y<topB+30))view.cy-=(y-target)/P.s;
+  drawMap()}
+function centerOn(la,lo,z){view.cx=lo;view.cy=la;if(z)view.z=Math.max(view.z,z)}
+
+// ---------- gestures ----------
+const ptrs=new Map();let drag=null,pinch=null;
+function zoomAt(f,x,y){const cv=$("map");x??=cv.clientWidth/2;y??=P.y(view.cy);const la=P.lat(y),lo=P.lon(x);view.z=Math.max(.8,Math.min(14,view.z*f));P=proj(cv.clientWidth,cv.clientHeight);view.cx+=lo-P.lon(x);view.cy+=la-P.lat(y);drawMap()}
+const m=$("map");
+m.addEventListener("pointerdown",e=>{m.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.offsetX,y:e.offsetY});
+  if(ptrs.size===1)drag={x:e.offsetX,y:e.offsetY,cx:view.cx,cy:view.cy,moved:false,t:Date.now()};
+  if(ptrs.size===2){const[a,b]=[...ptrs.values()];pinch={d:Math.hypot(a.x-b.x,a.y-b.y),z:view.z};if(drag)drag.moved=true}});
+m.addEventListener("pointermove",e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.offsetX,y:e.offsetY});
+  if(pinch&&ptrs.size===2){const[a,b]=[...ptrs.values()];zoomAt(pinch.z*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d/view.z,(a.x+b.x)/2,(a.y+b.y)/2);return}
+  if(drag&&ptrs.size===1){const dx=e.offsetX-drag.x,dy=e.offsetY-drag.y;if(Math.hypot(dx,dy)>7)drag.moved=true;if(drag.moved){view.cx=drag.cx-dx/(KX*P.s);view.cy=drag.cy+dy/P.s;drawMap()}}});
+let lastTap=0;
+function endPtr(e){if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);
+  if(drag&&!drag.moved&&ptrs.size===0&&e.type==="pointerup"){const now=Date.now();
+    if(now-lastTap<300){zoomAt(2,e.offsetX,e.offsetY);lastTap=0}else{lastTap=now;setPoint(P.lat(e.offsetY),P.lon(e.offsetX))}}
+  if(ptrs.size<2)pinch=null;if(ptrs.size===0)drag=null}
+m.addEventListener("pointerup",endPtr);m.addEventListener("pointercancel",endPtr);
+m.addEventListener("wheel",e=>{e.preventDefault();zoomAt(e.deltaY<0?1.25:.8,e.offsetX,e.offsetY)},{passive:false});
+$("zin").onclick=()=>zoomAt(1.6);$("zout").onclick=()=>zoomAt(1/1.6);
+$("zreset").onclick=()=>{Object.assign(view,HOME);drawMap()};
+
+// ---------- controls ----------
+function renderControls(){
+  $("plantChips").innerHTML=Object.entries(PLANTS).map(([k,p])=>`<button class="chip" data-p="${k}" aria-pressed="${!!sel[k]}"><span class="dot" style="background:${p.col}"></span>${p.name}</button>`).join("");
+  $("timeSeg").innerHTML=Object.entries(TIMES).map(([k,t])=>`<button data-t="${k}" aria-pressed="${when===k}">${t}</button>`).join("")}
+const OPP={N:"S",NE:"SW",E:"W",SE:"NW",S:"N",SW:"NE",W:"E",NW:"SE"},DIR={N:"north",NE:"northeast",E:"east",SE:"southeast",S:"south",SW:"southwest",W:"west",NW:"northwest"};
+function renderDrawer(){
+  const s=sunTimes($("date").value),w=$("wind").value;
+  $("suntimes").innerHTML=`<div><b>Legal light (approx)</b>${fmt(s.rise-30)}</div><div><b>Last legal light</b>${fmt(s.set+30)}</div><div><b>Sunrise</b>${fmt(s.rise)}</div><div><b>Sunset</b>${fmt(s.set)}</div>`;
+  $("windTip").innerHTML=`<b>Wind from the ${DIR[w]}:</b> come in from the ${DIR[OPP[w]]} side, walking into the wind. At ${TIMES[when].toLowerCase()} thermals ${when==="midday"?"rise, so approach from above the elk":"sink, so approach from below the elk"}.`;
+  $("savedList").innerHTML=saved.length?saved.map((s,i)=>`<button data-go="${s.lat},${s.lon}" data-name="${esc(s.n)}"><span>★ ${esc(s.n)}</span><small>${s.lat.toFixed(3)}, ${s.lon.toFixed(3)}</small></button>`).join(""):`<p class="note">Tap ☆ Save on any spot to keep it here.</p>`;
+  const ranked=ZONES.map(z=>({z,sc:evaluate({lat:z.lat,lon:z.lon}).sc})).sort((a,b)=>b.sc-a.sc).slice(0,5);
+  $("bestList").innerHTML=ranked.map(r=>`<button data-go="${r.z.lat},${r.z.lon}" data-name="${esc(r.z.n)}"><span>${esc(r.z.n)}</span><small>${r.sc}${me?" · "+hav(me[0],me[1],r.z.lat,r.z.lon).toFixed(0)+" mi":""}</small></button>`).join("")}
+function openMenu(o){$("drawer").hidden=!o;$("scrim").hidden=!o;if(o){renderDrawer();$("closeMenu").focus()}else $("menuBtn").focus()}
+$("menuBtn").onclick=()=>openMenu(true);$("closeMenu").onclick=()=>openMenu(false);$("scrim").onclick=()=>openMenu(false);
+addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("drawer").hidden)openMenu(false)});
+
+function parseSpot(t){t=decodeURIComponent(t||"");
+  for(const p of[/@(-?\d+\.\d+),\s*(-?\d+\.\d+)/,/[?&](?:q|ll|query|destination|center)=(-?\d+\.\d+),\s*(-?\d+\.\d+)/,/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/,/(-?\d{2}\.\d+)\s*[,\s]\s*(-?\d{3}\.\d+)/]){const r=t.match(p);if(r){let a=+r[1],o=+r[2];if(o>0&&a<0)[a,o]=[o,a];if(o>0)o=-o;return[a,o]}}return null}
+
+document.addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const d=b.dataset;
+  if(d.p){sel[d.p]=!sel[d.p];if(!Object.values(sel).some(Boolean))sel[d.p]=true;store.set("elkPlants",sel);renderControls();drawMap();renderSheet();return}
+  if(d.t){when=d.t;renderControls();renderSheet();if(!$("drawer").hidden)renderDrawer();return}
+  if(d.act==="close"){pt=null;drawMap();renderSheet();return}
+  if(d.act==="copy"){const v=d.v;navigator.clipboard?.writeText(v).then(()=>toast("Copied "+v),()=>toast(v))??toast(v);return}
+  if(d.act==="save"){const i=saved.findIndex(s=>Math.abs(s.lat-pt.lat)<1e-4&&Math.abs(s.lon-pt.lon)<1e-4);
+    if(i>=0){saved.splice(i,1);toast("Removed")}else{saved.push({n:pt.name||("Spot "+(saved.length+1)),lat:pt.lat,lon:pt.lon});toast("Saved")}store.set("elkSaved",saved);drawMap();renderSheet();return}
+  if(d.cover){pt.cover=pt.cover===d.cover?null:d.cover;renderSheet();return}
+  if(d.yn){const[k,v]=d.yn.split(":");pt[k]=pt[k]===+v?null:+v;renderSheet();return}
+  if(d.go){const[a,o]=d.go.split(",").map(Number);openMenu(false);centerOn(a,o,3);setPoint(a,o,d.name);return}});
+$("myloc").addEventListener("input",()=>{const r=parseSpot($("myloc").value);me=r&&r[0]>45&&r[0]<50?r:null;store.set("elkMe",me?$("myloc").value:"");
+  $("locNote").textContent=me?"Blue dot added. Distances now show on every spot.":"Shows a blue dot and distances. In Google Maps, long-press your spot and copy the numbers.";drawMap();renderSheet();renderDrawer()});
+["date","wind","snow","pressure"].forEach(id=>$(id).addEventListener("input",()=>{renderDrawer();renderSheet()}));
+addEventListener("resize",drawMap);
+
+
+// ---------- live GPS (works with no cell service) ----------
+let watchId=null,gpsAcc=null;
+$("gps").onclick=()=>{
+  if(!navigator.geolocation){toast("GPS isn't available on this device");return}
+  if(watchId!=null){navigator.geolocation.clearWatch(watchId);watchId=null;$("gps").setAttribute("aria-pressed","false");toast("Live location off");return}
+  $("gps").setAttribute("aria-pressed","true");toast("Finding you…");let first=true;
+  watchId=navigator.geolocation.watchPosition(p=>{
+    me=[p.coords.latitude,p.coords.longitude];gpsAcc=p.coords.accuracy;
+    if(first){first=false;centerOn(me[0],me[1],3);toast("Found you · ±"+Math.round(gpsAcc*3.281)+" ft");setPoint(me[0],me[1],"You are here")}
+    else{drawMap();renderSheet()}
+    $("myloc").value=me[0].toFixed(5)+", "+me[1].toFixed(5)},
+  err=>{toast(err.code===1?"Location is off. Turn it on in Settings › Privacy › Location Services › Safari Websites.":"No GPS fix yet. Try again in the open.");
+    if(watchId!=null)navigator.geolocation.clearWatch(watchId);watchId=null;$("gps").setAttribute("aria-pressed","false")},
+  {enableHighAccuracy:true,maximumAge:5000,timeout:30000})};
+// ---------- offline ----------
+function netState(){$("offline").hidden=navigator.onLine}
+addEventListener("online",netState);addEventListener("offline",netState);netState();
+if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+
+// ---------- init ----------
+$("date").value=todayStr();
+{const s=sunTimes($("date").value),n=nowMin();when=(n<s.rise+120||n>s.set+60)?"dawn":n<s.set-150?"midday":"evening"}
+const lastLoc=store.get("elkMe","");if(lastLoc){$("myloc").value=lastLoc;const r=parseSpot(lastLoc);if(r)me=r}
+$("inat").innerHTML=Object.values(PLANTS).map(p=>`<a href="https://www.inaturalist.org/observations?taxon_name=${p.inat}&swlat=48.18&swlng=-117.42&nelat=49.0&nelng=-117.03&subview=map" target="_blank" rel="noopener">${p.name} sightings in GMU 113 ↗</a>`).join("");
+$("legend").innerHTML=Object.values(PLANTS).map(p=>`<span><i style="background:${p.col}"></i>${p.name}</span>`).join("")+`<span><i style="background:var(--good)"></i>National forest (white)</span><span><i style="background:var(--chip);border:1px solid var(--muted)"></i>Not national forest (grey)</span><span><i style="background:var(--sky)"></i>River, lake, you</span><span><i style="background:var(--blaze)"></i>Unit line, your pin</span><span>★ Saved</span>`;
+renderControls();drawMap();renderSheet();
+</script>
+</body>
+</html>
