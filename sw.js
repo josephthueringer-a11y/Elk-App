@@ -2,7 +2,7 @@
 // - Keeps the app itself on the phone.
 // - Keeps every topo, aerial and terrain tile you have viewed or downloaded,
 //   so the map and tap reports work with no cell service.
-const APP = "elk-spots-v4";
+const APP = "elk-spots-v5";
 const TILES = "elk-tiles";
 const CORE = ["./", "./index.html", "./manifest.json", "./apple-touch-icon.png", "./icon-192.png", "./icon-512.png"];
 
