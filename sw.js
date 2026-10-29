@@ -1,33 +1,63 @@
-// Offline support: keeps the app, icons and fonts on the phone so it works with no cell service.
-const CACHE = "elk-spots-v1";
+// Elk Spots offline support.
+// - Keeps the app itself on the phone.
+// - Keeps every topo, aerial and terrain tile you have viewed or downloaded,
+//   so the map and tap reports work with no cell service.
+const APP = "elk-spots-v3";
+const TILES = "elk-tiles";
 const CORE = ["./", "./index.html", "./manifest.json", "./apple-touch-icon.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)));
+  e.waitUntil(caches.open(APP).then(c => c.addAll(CORE)));
   self.skipWaiting();
 });
 
 self.addEventListener("activate", e => {
-  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))));
+  e.waitUntil(caches.keys().then(keys => Promise.all(
+    keys.filter(k => k.startsWith("elk-spots-") && k !== APP).map(k => caches.delete(k))
+  )));
   self.clients.claim();
 });
 
+const isTile = u =>
+  (u.hostname === "basemap.nationalmap.gov" && u.pathname.includes("/tile/")) ||
+  (u.hostname === "elevation-tiles-prod.s3.amazonaws.com") ||
+  (u.hostname === "s3.amazonaws.com" && u.pathname.startsWith("/elevation-tiles-prod/"));
+const isFont = u => u.hostname.endsWith("googleapis.com") || u.hostname.endsWith("gstatic.com");
+
+async function tileFetch(req) {
+  const hit = await caches.match(req.url);
+  if (hit) return hit;
+  let res = null;
+  try { res = await fetch(req.url, { mode: "cors" }); } catch (e) { res = null; }
+  if (!res || !res.ok) {
+    try { res = await fetch(req.url, { mode: "no-cors" }); } catch (e) { return new Response("", { status: 504 }); }
+  }
+  if (res && (res.ok || res.type === "opaque")) {
+    const copy = res.clone();
+    caches.open(TILES).then(c => c.put(req.url, copy)).catch(() => {});
+  }
+  return res;
+}
+
+async function appFetch(req) {
+  const cache = await caches.open(APP);
+  const hit = await cache.match(req, { ignoreSearch: true });
+  const fresh = fetch(req).then(res => {
+    if (res && (res.ok || res.type === "opaque")) cache.put(req, res.clone());
+    return res;
+  }).catch(() => null);
+  if (hit) { fresh.catch(() => {}); return hit; }
+  const res = await fresh;
+  if (res) return res;
+  if (req.mode === "navigate") return (await cache.match("./index.html")) || new Response("Offline", { status: 503 });
+  return new Response("", { status: 504 });
+}
+
 self.addEventListener("fetch", e => {
-  if (e.request.method !== "GET") return;
-  const url = new URL(e.request.url);
-  const own = url.origin === location.origin;
-  const fonts = url.hostname.endsWith("googleapis.com") || url.hostname.endsWith("gstatic.com");
-  if (!own && !fonts) return; // map/direction links open in other apps
-  e.respondWith(
-    caches.match(e.request).then(hit => {
-      const fresh = fetch(e.request).then(res => {
-        if (res && (res.ok || res.type === "opaque")) {
-          const copy = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, copy));
-        }
-        return res;
-      }).catch(() => hit || caches.match("./index.html"));
-      return hit || fresh;
-    })
-  );
+  const req = e.request;
+  if (req.method !== "GET") return;
+  const u = new URL(req.url);
+  if (isTile(u)) { e.respondWith(tileFetch(req)); return; }
+  if (u.origin === self.location.origin || isFont(u)) { e.respondWith(appFetch(req)); return; }
+  // Live lookups (land owner, burns, logging, sightings) go straight to the network.
 });
