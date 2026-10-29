@@ -2,8 +2,8 @@
 // - Keeps the app itself on the phone.
 // - Keeps every topo, aerial and terrain tile you have viewed or downloaded,
 //   so the map and tap reports work with no cell service.
-const APP = "elk-spots-v5";
-const TILES = "elk-tiles";
+const APP = "elk-spots-v8";
+const TILES = "elk-tiles-2";
 const CORE = ["./", "./index.html", "./manifest.json", "./apple-touch-icon.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {
@@ -13,7 +13,7 @@ self.addEventListener("install", e => {
 
 self.addEventListener("activate", e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(
-    keys.filter(k => k.startsWith("elk-spots-") && k !== APP).map(k => caches.delete(k))
+    keys.filter(k => (k.startsWith("elk-spots-") && k !== APP) || k === "elk-tiles").map(k => caches.delete(k))
   )));
   self.clients.claim();
 });
@@ -32,7 +32,9 @@ async function tileFetch(req) {
   if (hit) return hit;
   let res = null;
   try { res = await timed(fetch(req.url, { mode: "cors" }), 8000); } catch (e) { res = null; }
-  if (!res || !res.ok) {
+  if (res && !res.ok) return res; // e.g. 404 "no detail here": pass it on, never save it
+  if (!res) {
+    // Server didn't allow a readable request; fetch it for display only.
     try { res = await timed(fetch(req.url, { mode: "no-cors" }), 8000); } catch (e) { return new Response("", { status: 504 }); }
   }
   if (res && (res.ok || res.type === "opaque")) {
@@ -42,6 +44,18 @@ async function tileFetch(req) {
   return res;
 }
 
+// The app page itself: try the network first (so updates show up right away),
+// fall back to the saved copy after 3 seconds or with no signal.
+async function pageFetch(req) {
+  const cache = await caches.open(APP);
+  try {
+    const res = await timed(fetch(req, { cache: "no-store" }), 3000);
+    if (res && res.ok) { cache.put("./index.html", res.clone()); return res; }
+  } catch (e) {}
+  return (await cache.match("./index.html")) || (await cache.match("./")) || new Response("Offline", { status: 503 });
+}
+
+// Icons, manifest and fonts: saved copy first, refreshed in the background.
 async function appFetch(req) {
   const cache = await caches.open(APP);
   const hit = await cache.match(req, { ignoreSearch: true });
@@ -51,9 +65,7 @@ async function appFetch(req) {
   }).catch(() => null);
   if (hit) { fresh.catch(() => {}); return hit; }
   const res = await fresh;
-  if (res) return res;
-  if (req.mode === "navigate") return (await cache.match("./index.html")) || new Response("Offline", { status: 503 });
-  return new Response("", { status: 504 });
+  return res || new Response("", { status: 504 });
 }
 
 self.addEventListener("fetch", e => {
@@ -61,6 +73,7 @@ self.addEventListener("fetch", e => {
   if (req.method !== "GET") return;
   const u = new URL(req.url);
   if (isTile(u)) { e.respondWith(tileFetch(req)); return; }
+  if (u.origin === self.location.origin && (req.mode === "navigate" || u.pathname.endsWith("/") || u.pathname.endsWith("/index.html"))) { e.respondWith(pageFetch(req)); return; }
   if (u.origin === self.location.origin || isFont(u)) { e.respondWith(appFetch(req)); return; }
   // Live lookups (land owner, burns, logging, sightings) go straight to the network.
 });

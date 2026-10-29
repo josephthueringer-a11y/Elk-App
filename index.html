@@ -178,13 +178,16 @@ const RAD=Math.PI/180;
 // Each map type has backups: if one server doesn't answer, the next one is used.
 const SRC={
   topo:{label:"Topo",list:[
-    {url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",max:18,by:"Esri, USGS"},
-    {url:"https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",max:16,by:"USGS"},
-    {url:"https://a.tile.opentopomap.org/{z}/{x}/{y}.png",max:17,by:"OpenTopoMap, OpenStreetMap"}]},
+    {id:"esriTopo",url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}?blankTile=false",max:17,by:"Esri, USGS"},
+    {id:"usgsTopo",url:"https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}?blankTile=false",max:16,by:"USGS"},
+    {id:"otm",url:"https://a.tile.opentopomap.org/{z}/{x}/{y}.png",max:17,by:"OpenTopoMap, OpenStreetMap"}]},
   photo:{label:"Aerial",list:[
-    {url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",max:18,by:"Esri, Maxar, USDA"},
-    {url:"https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",max:16,by:"USGS"}]}};
+    {id:"esriPhoto",url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?blankTile=false",max:18,by:"Esri, Maxar, USDA"},
+    {id:"usgsPhoto",url:"https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}?blankTile=false",max:16,by:"USGS"}]}};
 const active={topo:store.get("elkSrc2_topo",0),photo:store.get("elkSrc2_photo",0)};
+// Where a map has no detail past a certain zoom, remember it and enlarge the last good level instead.
+const learnedMax=store.get("elkMaxZ",{});
+for(const l in SRC)for(const sc of SRC[l].list)if(sc.id&&learnedMax[sc.id])sc.max=Math.min(sc.max,learnedMax[sc.id]);
 const failCount={topo:[0,0,0],photo:[0,0]};
 const srcOf=l=>SRC[l].list[Math.min(active[l],SRC[l].list.length-1)];
 const TERRAIN="https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png";
@@ -375,10 +378,10 @@ function model(p){
 function analyze(lat,lon,name){
   const my=++token;pt={lat,lon,name,cover:null,terrain:null,photo:null,own:null,fire:null,cut:null,inat:null,pending:{terrain:1,photo:1,own:1,fire:1,cut:1,inat:1}};
   draw();renderSheet();$("sheet").scrollTop=0;keepPinVisible();
-  const done=(k,v)=>{if(my!==token)return;pt[k]=v;delete pt.pending[k];renderSheet()};
+  const done=(k,v)=>{if(my!==token||!pt)return;pt[k]=v;delete pt.pending[k];renderSheet()};
   terrainAt(lat,lon).then(v=>done("terrain",v),()=>done("terrain","err"));
   photoAt(lat,lon).then(v=>done("photo",v),()=>done("photo","err"));
-  setTimeout(()=>{if(my!==token)return;Object.keys(pt.pending).forEach(k=>done(k,"err"))},22000);
+  setTimeout(()=>{if(my!==token||!pt)return;Object.keys(pt.pending).forEach(k=>done(k,"err"))},22000);
   if(!navigator.onLine){["own","fire","cut","inat"].forEach(k=>done(k,"err"));return}
   ownerAt(lat,lon).then(v=>done("own",v),()=>done("own","err"));
   fireAt(lat,lon).then(v=>done("fire",v),()=>done("fire","err"));
@@ -431,18 +434,40 @@ function renderSheet(){
 const cv=$("map");let W=0,H=0,dpr=1;const g=cv.getContext("2d");
 const tileImgs=new Map();let rafQ=false;
 function requestDraw(){if(rafQ)return;rafQ=true;requestAnimationFrame(()=>{rafQ=false;draw()})}
-function tileImg(l,z,x,y){const n=Math.pow(2,z);if(y<0||y>=n)return null;x=((x%n)+n)%n;const key=l+z+"/"+x+"/"+y;let t=tileImgs.get(key);
-  if(!t){t={img:new Image(),ok:false,bad:false,i:active[l]};tileImgs.set(key,t);
-    const load=()=>{const src=SRC[l].list[t.i];if(!src){t.bad=true;return}if(z>src.max){t.i++;return load()}
-      clearTimeout(t.to);t.to=setTimeout(()=>{if(!t.ok)next()},4000);t.img.src=tpl(src.url,z,x,y)};
-    const next=()=>{if(t.ok)return;failCount[l][t.i]=(failCount[l][t.i]||0)+1;
-      if(failCount[l][t.i]>=2&&active[l]===t.i&&t.i<SRC[l].list.length-1){active[l]=t.i+1;store.set("elkSrc2_"+l,active[l]);noteSource()}
-      t.i++;load()};
-    t.img.onload=()=>{t.ok=true;clearTimeout(t.to);if(t.i===active[l]||t.i<active[l])failCount[l][t.i]=0;requestDraw()};
-    t.img.onerror=()=>{clearTimeout(t.to);next()};
-    load();
-    if(tileImgs.size>500){for(const k of tileImgs.keys()){tileImgs.delete(k);if(tileImgs.size<=400)break}}}
-  else{tileImgs.delete(key);tileImgs.set(key,t)}return t}
+// Tile loading: a small queue that always serves what's on screen now, newest first.
+// Pieces you've zoomed past are dropped instead of clogging the connection.
+let tq=[],inflight=0,wanted=new Set();const MAXQ=8;
+const tkey=(l,z,x,y)=>l+z+"/"+x+"/"+y;
+function tileImg(l,z,x,y){const n=Math.pow(2,z);if(y<0||y>=n)return null;x=((x%n)+n)%n;const key=tkey(l,z,x,y);let t=tileImgs.get(key);
+  if(!t){t={key,l,z,x,y,img:new Image(),ok:false,bad:false,i:active[l],state:null};tileImgs.set(key,t);
+    if(tileImgs.size>600){for(const[k,v]of tileImgs){if(v.state!=="loading"&&!wanted.has(k)){tileImgs.delete(k);if(tileImgs.size<=450)break}}}}
+  else{tileImgs.delete(key);tileImgs.set(key,t)}
+  wanted.add(key);if(!t.ok&&!t.bad&&!t.state){t.state="queued";tq.push(t)}return t}
+function pump(){
+  tq=tq.filter(t=>{if(wanted.has(t.key))return true;t.state=null;return false});
+  while(inflight<MAXQ&&tq.length){const t=tq.pop();startTile(t)}}
+function startTile(t){inflight++;t.state="loading";let done=false;
+  const finish=()=>{if(done)return;done=true;clearTimeout(t.to);inflight--;t.state=t.ok?"done":null;setTimeout(pump,0)};
+  const load=()=>{const src=SRC[t.l].list[t.i];if(!src){t.bad=true;return finish()}if(t.z>src.max){t.i++;return load()}
+    clearTimeout(t.to);t.to=setTimeout(()=>{if(!t.ok)fail(true)},6500);t.img.src=tpl(src.url,t.z,t.x,t.y)};
+  const fail=slow=>{if(t.ok)return;const l=t.l;
+    // A quick "no" from a map server usually means no detail at this zoom, not a dead server.
+    // Check the same spot one zoom out on the same map before deciding.
+    const sc=SRC[l].list[t.i];
+    if(!slow&&!t.probed&&t.z>=11&&sc&&sc.id){t.probed=true;
+      if(t.z-1>=sc.max){t.bad=true;finish();requestDraw();return}
+      const pr=new Image();let pd=false;const pt2=setTimeout(()=>{if(!pd){pd=true;realFail()}},6000);
+      pr.onload=()=>{if(pd)return;pd=true;clearTimeout(pt2);if(sc.max>t.z-1){sc.max=t.z-1;learnedMax[sc.id]=t.z-1;store.set("elkMaxZ",learnedMax)}t.bad=true;finish();requestDraw()};
+      pr.onerror=()=>{if(pd)return;pd=true;clearTimeout(pt2);realFail()};
+      pr.src=tpl(sc.url,t.z-1,Math.floor(t.x/2),Math.floor(t.y/2));return}
+    realFail();
+    function realFail(){
+    failCount[l][t.i]=(failCount[l][t.i]||0)+1;
+    if(failCount[l][t.i]>=4&&active[l]===t.i&&t.i<SRC[l].list.length-1){active[l]=t.i+1;store.set("elkSrc2_"+l,active[l]);noteSource()}
+    t.i++;if(!wanted.has(t.key)&&slow){t.i--;t.img.src="";return finish()}load()}};
+  t.img.onload=()=>{t.ok=true;failCount[t.l][t.i]=0;finish();requestDraw()};
+  t.img.onerror=()=>{clearTimeout(t.to);fail(false)};
+  load()}
 function noteSource(){const s2=srcOf(layer);$("attrib").textContent="Map: "+s2.by;if(active[layer]>0)toast(`Main map is slow, switched to the ${s2.by.split(",")[0]} backup`,3500)}
 let firstTileTimer=setTimeout(()=>{if(![...tileImgs.values()].some(t=>t.ok))toast(navigator.onLine?"Map pictures are slow to load. Hang on, or check your signal.":"No signal and this area isn't downloaded yet.",4500)},12000);
 function resize(){dpr=window.devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);draw()}
@@ -455,11 +480,22 @@ function draw(){
   const[cx,cy]=worldPx(view.lat,view.lon,zi);const left=cx-W/2/sc,top=cy-H/2/sc;
   const x0=Math.floor(left/256),y0=Math.floor(top/256),x1=Math.floor((left+W/sc)/256),y1=Math.floor((top+H/sc)/256);
   g.imageSmoothingEnabled=true;
+  wanted=new Set();
+  // the zoom level below (cheap, makes zooming out instant)
+  if(zi-1>=3){const sc2=sc*2,l2=cx/2-W/2/sc2,t2=cy/2-H/2/sc2;for(let ty=Math.floor(t2/256);ty<=Math.floor((t2+H/sc2)/256);ty++)for(let tx=Math.floor(l2/256);tx<=Math.floor((l2+W/sc2)/256);tx++)tileImg(layer,zi-1,tx,ty)}
+  const n2=Math.pow(2,zi);
   for(let ty=y0;ty<=y1;ty++)for(let tx=x0;tx<=x1;tx++){
     const dx=(tx*256-left)*sc,dy=(ty*256-top)*sc,ds=256*sc+.5;const t=tileImg(layer,zi,tx,ty);
     if(t&&t.ok){g.drawImage(t.img,dx,dy,ds,ds);continue}
-    for(let up=1;up<=4;up++){const pz=zi-up;if(pz<3)break;const f=Math.pow(2,up);const px=Math.floor(tx/f),py=Math.floor(ty/f);const key=layer+pz+"/"+px+"/"+py;const pt2=tileImgs.get(key);
-      if(pt2&&pt2.ok){const sx=(tx-px*f)*256/f,sy=(ty-py*f)*256/f;g.drawImage(pt2.img,sx,sy,256/f,256/f,dx,dy,ds,ds);break}}}
+    const wx=((tx%n2)+n2)%n2;let drew=false;
+    // closer-in pieces already loaded (zooming out)
+    let kids=0;for(let k=0;k<4;k++){const c=tileImgs.get(tkey(layer,zi+1,wx*2+(k&1),ty*2+(k>>1)));if(c&&c.ok)kids++}
+    if(kids===4){for(let k=0;k<4;k++){const c=tileImgs.get(tkey(layer,zi+1,wx*2+(k&1),ty*2+(k>>1)));g.drawImage(c.img,dx+(k&1)*ds/2,dy+(k>>1)*ds/2,ds/2+.5,ds/2+.5)}continue}
+    // farther-out pieces (zooming in)
+    for(let up=1;up<=5;up++){const pz=zi-up;if(pz<3)break;const f=Math.pow(2,up);const px=Math.floor(wx/f),py=Math.floor(ty/f);const pt2=tileImgs.get(tkey(layer,pz,px,py));
+      if(pt2&&pt2.ok){const sx=(wx-px*f)*256/f,sy=(ty-py*f)*256/f;g.drawImage(pt2.img,sx,sy,256/f,256/f,dx,dy,ds,ds);drew=true;break}}
+    if(!drew&&kids){for(let k=0;k<4;k++){const c=tileImgs.get(tkey(layer,zi+1,wx*2+(k&1),ty*2+(k>>1)));if(c&&c.ok)g.drawImage(c.img,dx+(k&1)*ds/2,dy+(k>>1)*ds/2,ds/2+.5,ds/2+.5)}}}
+  pump();
   // Forest Service land shading
   if(ownOn&&ownImg&&ownImg.complete&&ownImg.naturalWidth&&ownBox){const[a,b]=scr(ownBox.n,ownBox.w),[c2,d2]=scr(ownBox.s,ownBox.e);g.globalAlpha=.32;g.drawImage(ownImg,a,b,c2-a,d2-b);g.globalAlpha=1}
   // unit line
@@ -489,7 +525,7 @@ function keepPinVisible(){if(!pt||innerWidth>=760)return;const[x,y]=scr(pt.lat,p
 
 // ---------- gestures ----------
 const ptrs=new Map();let drag=null,pinch=null,lastTap=0;
-function zoomAbout(nz,sx,sy){nz=clamp(nz,8,18);const[la,lo]=toLL(sx,sy);view.z=nz;const[cx,cy]=worldPx(view.lat,view.lon,nz),[px,py]=worldPx(la,lo,nz);const c=unproject(cx+(px-(cx+sx-W/2)),cy+(py-(cy+sy-H/2)),nz);view.lat=c[0];view.lon=c[1];requestDraw();refreshOwn()}
+function zoomAbout(nz,sx,sy){nz=clamp(nz,8,18);const[la,lo]=toLL(sx,sy);view.z=nz;const[cx,cy]=worldPx(view.lat,view.lon,nz),[px,py]=worldPx(la,lo,nz);const c=unproject(cx+(px-(cx+sx-W/2)),cy+(py-(cy+sy-H/2)),nz);view.lat=c[0];view.lon=c[1];requestDraw();if(!pinch)refreshOwn()}
 cv.addEventListener("pointerdown",e=>{cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(ptrs.size===1){const[cx,cy]=worldPx(view.lat,view.lon,view.z);drag={x:e.clientX,y:e.clientY,cx,cy,moved:false}}
   if(ptrs.size===2){const[a,b]=[...ptrs.values()];pinch={d:Math.hypot(a.x-b.x,a.y-b.y),z:view.z};if(drag)drag.moved=true}});
@@ -498,7 +534,7 @@ cv.addEventListener("pointermove",e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(
   if(drag&&ptrs.size===1){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.hypot(dx,dy)>7)drag.moved=true;if(drag.moved){const c=unproject(drag.cx-dx,drag.cy-dy,view.z);view.lat=c[0];view.lon=c[1];requestDraw()}}});
 function endPtr(e){if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);
   if(drag&&ptrs.size===0){if(drag.moved)refreshOwn();else if(e.type==="pointerup"){const now=Date.now();if(now-lastTap<300){zoomAbout(view.z+1,e.clientX,e.clientY);lastTap=0}else{lastTap=now;const[la,lo]=toLL(e.clientX,e.clientY);analyze(la,lo)}}}
-  if(ptrs.size<2)pinch=null;if(ptrs.size===0)drag=null}
+  if(ptrs.size<2){if(pinch)refreshOwn();pinch=null}if(ptrs.size===0)drag=null}
 cv.addEventListener("pointerup",endPtr);cv.addEventListener("pointercancel",endPtr);
 cv.addEventListener("wheel",e=>{e.preventDefault();zoomAbout(view.z+(e.deltaY<0?.5:-.5),e.clientX,e.clientY)},{passive:false});
 $("zin").onclick=()=>zoomAbout(view.z+1,W/2,H/2);$("zout").onclick=()=>zoomAbout(view.z-1,W/2,H/2);
@@ -573,7 +609,8 @@ async function download(){
   const upd=()=>{bar.style.width=(done/total*100).toFixed(1)+"%";$("dlNote").textContent=`${done.toLocaleString()} of ${total.toLocaleString()} map pieces saved${fail?` · ${fail} failed`:""}`};
   let i=0;
   async function worker(){while(i<urls.length&&!dlStop){const u=urls[i++];try{if(!(await cache.match(u))){let r;try{r=await fetchT(u,{mode:"cors"},20000)}catch(e){r=null}
-        if(!r||!r.ok){r=await fetchT(u,{mode:"no-cors"},20000)}if(r&&(r.ok||r.type==="opaque"))await cache.put(u,r);else fail++}}catch(e){fail++}done++;if(done%10===0||done===total)upd()}}
+        if(r&&r.status===404){done++;continue}
+        if(!r){r=await fetchT(u,{mode:"no-cors"},20000)}if(r&&(r.ok||r.type==="opaque"))await cache.put(u,r);else fail++}}catch(e){fail++}done++;if(done%10===0||done===total)upd()}}
   upd();await Promise.all(Array.from({length:6},worker));
   dlRunning=false;$("dlBtn").textContent="Download map";
   if(dlStop){$("dlNote").textContent=`Stopped. ${done.toLocaleString()} pieces saved. Tap Download to finish later.`}
@@ -584,7 +621,10 @@ $("dlBtn").onclick=download;
 // ---------- offline status ----------
 function netState(){$("offlinePill").hidden=navigator.onLine;draw();if(navigator.onLine)refreshOwn()}
 addEventListener("online",netState);addEventListener("offline",netState);
-if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+// Self-updating: when a new version is uploaded, the app switches to it on its own.
+if("serviceWorker" in navigator){const hadSW=!!navigator.serviceWorker.controller;let reloaded=false;
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{if(hadSW&&!reloaded){reloaded=true;location.reload()}});
+  addEventListener("load",()=>navigator.serviceWorker.register("sw.js",{updateViaCache:"none"}).then(r=>{r.update().catch(()=>{});document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")r.update().catch(()=>{})})}).catch(()=>{}))}
 addEventListener("resize",()=>{resize();refreshOwn()});
 
 // ---------- start ----------
