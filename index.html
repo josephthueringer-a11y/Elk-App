@@ -184,10 +184,13 @@ const SRC={
   photo:{label:"Aerial",list:[
     {id:"esriPhoto",url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?blankTile=false",max:18,by:"Esri, Maxar, USDA"},
     {id:"usgsPhoto",url:"https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}?blankTile=false",max:16,by:"USGS"}]}};
-const active={topo:store.get("elkSrc2_topo",0),photo:store.get("elkSrc2_photo",0)};
+// Which map server is in use. Always starts on the fast one; a switch to a backup lasts only this session.
+const active={topo:0,photo:0};
+try{["elkSrc_topo","elkSrc_photo","elkSrc2_topo","elkSrc2_photo","elkMaxZ"].forEach(k=>localStorage.removeItem(k))}catch(e){}
+setInterval(()=>{for(const l in active)if(active[l]>0){active[l]=0;failCount[l]=failCount[l].map(()=>0);$("attrib").textContent="Map: "+srcOf(layer).by;requestDraw()}},120000);
 // Where a map has no detail past a certain zoom, remember it and enlarge the last good level instead.
-const learnedMax=store.get("elkMaxZ",{});
-for(const l in SRC)for(const sc of SRC[l].list)if(sc.id&&learnedMax[sc.id])sc.max=Math.min(sc.max,learnedMax[sc.id]);
+const learnedMax=store.get("elkMaxZ3",{});const MINLEARN={esriTopo:13,usgsTopo:13,otm:13,esriPhoto:15,usgsPhoto:14};
+for(const l in SRC)for(const sc of SRC[l].list)if(sc.id&&learnedMax[sc.id])sc.max=Math.min(sc.max,Math.max(MINLEARN[sc.id]||13,learnedMax[sc.id]));
 const failCount={topo:[0,0,0],photo:[0,0]};
 const srcOf=l=>SRC[l].list[Math.min(active[l],SRC[l].list.length-1)];
 const TERRAIN="https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png";
@@ -436,7 +439,7 @@ const tileImgs=new Map();let rafQ=false;
 function requestDraw(){if(rafQ)return;rafQ=true;requestAnimationFrame(()=>{rafQ=false;draw()})}
 // Tile loading: a small queue that always serves what's on screen now, newest first.
 // Pieces you've zoomed past are dropped instead of clogging the connection.
-let tq=[],inflight=0,wanted=new Set();const MAXQ=8;
+let tq=[],inflight=0,wanted=new Set();const MAXQ=12;
 const tkey=(l,z,x,y)=>l+z+"/"+x+"/"+y;
 function tileImg(l,z,x,y){const n=Math.pow(2,z);if(y<0||y>=n)return null;x=((x%n)+n)%n;const key=tkey(l,z,x,y);let t=tileImgs.get(key);
   if(!t){t={key,l,z,x,y,img:new Image(),ok:false,bad:false,i:active[l],state:null};tileImgs.set(key,t);
@@ -457,13 +460,13 @@ function startTile(t){inflight++;t.state="loading";let done=false;
     if(!slow&&!t.probed&&t.z>=11&&sc&&sc.id){t.probed=true;
       if(t.z-1>=sc.max){t.bad=true;finish();requestDraw();return}
       const pr=new Image();let pd=false;const pt2=setTimeout(()=>{if(!pd){pd=true;realFail()}},6000);
-      pr.onload=()=>{if(pd)return;pd=true;clearTimeout(pt2);if(sc.max>t.z-1){sc.max=t.z-1;learnedMax[sc.id]=t.z-1;store.set("elkMaxZ",learnedMax)}t.bad=true;finish();requestDraw()};
+      pr.onload=()=>{if(pd)return;pd=true;clearTimeout(pt2);const nm=Math.max(MINLEARN[sc.id]||13,t.z-1);if(sc.max>nm){sc.max=nm;learnedMax[sc.id]=nm;store.set("elkMaxZ3",learnedMax)}t.bad=true;finish();requestDraw()};
       pr.onerror=()=>{if(pd)return;pd=true;clearTimeout(pt2);realFail()};
       pr.src=tpl(sc.url,t.z-1,Math.floor(t.x/2),Math.floor(t.y/2));return}
     realFail();
     function realFail(){
     failCount[l][t.i]=(failCount[l][t.i]||0)+1;
-    if(failCount[l][t.i]>=4&&active[l]===t.i&&t.i<SRC[l].list.length-1){active[l]=t.i+1;store.set("elkSrc2_"+l,active[l]);noteSource()}
+    if(failCount[l][t.i]>=4&&active[l]===t.i&&t.i<SRC[l].list.length-1){active[l]=t.i+1;noteSource()}
     t.i++;if(!wanted.has(t.key)&&slow){t.i--;t.img.src="";return finish()}load()}};
   t.img.onload=()=>{t.ok=true;failCount[t.l][t.i]=0;finish();requestDraw()};
   t.img.onerror=()=>{clearTimeout(t.to);fail(false)};
