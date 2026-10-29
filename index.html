@@ -131,7 +131,7 @@ summary{font-family:var(--display);font-size:16px;text-transform:uppercase;lette
   <button class="iconbtn" id="zin" aria-label="Zoom in" style="font-size:22px">+</button>
   <button class="iconbtn" id="zout" aria-label="Zoom out" style="font-size:22px">−</button>
 </div>
-<div class="attrib">Map: USGS National Map</div>
+<div class="attrib" id="attrib">Map: USGS</div>
 
 <div class="sheet" id="sheet" aria-live="polite"></div>
 
@@ -173,9 +173,18 @@ const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
 const RAD=Math.PI/180;
 
 // ---------- data sources ----------
+// Each map type has backups: if one server doesn't answer, the next one is used.
 const SRC={
-  topo:{url:"https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",max:16,label:"Topo"},
-  photo:{url:"https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",max:16,label:"Aerial"}};
+  topo:{label:"Topo",list:[
+    {url:"https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",max:16,by:"USGS"},
+    {url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",max:18,by:"Esri, USGS"},
+    {url:"https://a.tile.opentopomap.org/{z}/{x}/{y}.png",max:17,by:"OpenTopoMap, OpenStreetMap"}]},
+  photo:{label:"Aerial",list:[
+    {url:"https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",max:16,by:"USGS"},
+    {url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",max:18,by:"Esri, Maxar, USDA"}]}};
+const active={topo:store.get("elkSrc_topo",0),photo:store.get("elkSrc_photo",0)};
+const failCount={topo:[0,0,0],photo:[0,0]};
+const srcOf=l=>SRC[l].list[Math.min(active[l],SRC[l].list.length-1)];
 const TERRAIN="https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png";
 const DEM="https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples";
 const NAIP="https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPImagery/ImageServer/getSamples";
@@ -285,7 +294,8 @@ function classify(R,G,B){const L=.3*R+.59*G+.11*B,exg=2*G-R-B;let open,label;
   return{open,label,L}}
 async function photoTiles(lat,lon){
   const[gx,gy]=worldPx(lat,lon,ZP);const tx=Math.floor(gx/256),ty=Math.floor(gy/256);
-  const d=await within(cachedPixels(tpl(SRC.photo.url,ZP,tx,ty)),8000);
+  let d=null,err=null;for(const src of SRC.photo.list){try{d=await within(cachedPixels(tpl(src.url,ZP,tx,ty)),7000);break}catch(e){err=e}}
+  if(!d)throw err||new Error("no photo");
   const cx=Math.floor(gx-tx*256),cy=Math.floor(gy-ty*256);let R=0,G=0,B=0,N=0;
   for(let y=cy-4;y<=cy+4;y++)for(let x=cx-4;x<=cx+4;x++){if(x<0||y<0||x>255||y>255)continue;const i=(y*256+x)*4;R+=d[i];G+=d[i+1];B+=d[i+2];N++}
   return classify(R/N,G/N,B/N)}
@@ -419,17 +429,27 @@ function renderSheet(){
 const cv=$("map");let W=0,H=0,dpr=1;const g=cv.getContext("2d");
 const tileImgs=new Map();let rafQ=false;
 function requestDraw(){if(rafQ)return;rafQ=true;requestAnimationFrame(()=>{rafQ=false;draw()})}
-function tileImg(src,z,x,y){const n=Math.pow(2,z);if(y<0||y>=n)return null;x=((x%n)+n)%n;const key=src+z+"/"+x+"/"+y;let t=tileImgs.get(key);
-  if(!t){const img=new Image();t={img,ok:false,bad:false};img.onload=()=>{t.ok=true;requestDraw()};img.onerror=()=>{t.bad=true};img.src=tpl(SRC[src].url,z,x,y);tileImgs.set(key,t);
+function tileImg(l,z,x,y){const n=Math.pow(2,z);if(y<0||y>=n)return null;x=((x%n)+n)%n;const key=l+z+"/"+x+"/"+y;let t=tileImgs.get(key);
+  if(!t){t={img:new Image(),ok:false,bad:false,i:active[l]};tileImgs.set(key,t);
+    const load=()=>{const src=SRC[l].list[t.i];if(!src){t.bad=true;return}if(z>src.max){t.i++;return load()}
+      clearTimeout(t.to);t.to=setTimeout(()=>{if(!t.ok)next()},7000);t.img.src=tpl(src.url,z,x,y)};
+    const next=()=>{if(t.ok)return;failCount[l][t.i]=(failCount[l][t.i]||0)+1;
+      if(failCount[l][t.i]>=3&&active[l]===t.i&&t.i<SRC[l].list.length-1){active[l]=t.i+1;store.set("elkSrc_"+l,active[l]);noteSource()}
+      t.i++;load()};
+    t.img.onload=()=>{t.ok=true;clearTimeout(t.to);if(t.i===active[l]||t.i<active[l])failCount[l][t.i]=0;requestDraw()};
+    t.img.onerror=()=>{clearTimeout(t.to);next()};
+    load();
     if(tileImgs.size>500){for(const k of tileImgs.keys()){tileImgs.delete(k);if(tileImgs.size<=400)break}}}
   else{tileImgs.delete(key);tileImgs.set(key,t)}return t}
+function noteSource(){const s2=srcOf(layer);$("attrib").textContent="Map: "+s2.by;if(active[layer]>0)toast(`USGS map isn't answering, switched to ${s2.by.split(",")[0]} topo`,3500)}
+let firstTileTimer=setTimeout(()=>{if(![...tileImgs.values()].some(t=>t.ok))toast(navigator.onLine?"Map pictures are slow to load. Hang on, or check your signal.":"No signal and this area isn't downloaded yet.",4500)},12000);
 function resize(){dpr=window.devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);draw()}
 const scr=(lat,lon)=>{const[cx,cy]=worldPx(view.lat,view.lon,view.z),[x,y]=worldPx(lat,lon,view.z);return[x-cx+W/2,y-cy+H/2]};
 const toLL=(sx,sy)=>{const[cx,cy]=worldPx(view.lat,view.lon,view.z);return unproject(cx+sx-W/2,cy+sy-H/2,view.z)};
 let ownImg=null,ownBox=null,ownTimer=null;
 function draw(){
   if(!W)return;g.setTransform(dpr,0,0,dpr,0,0);g.fillStyle="#dfe3d6";g.fillRect(0,0,W,H);
-  const S=SRC[layer];const zi=clamp(Math.round(view.z),3,S.max),sc=Math.pow(2,view.z-zi);
+  const S=srcOf(layer);const zi=clamp(Math.round(view.z),3,S.max),sc=Math.pow(2,view.z-zi);
   const[cx,cy]=worldPx(view.lat,view.lon,zi);const left=cx-W/2/sc,top=cy-H/2/sc;
   const x0=Math.floor(left/256),y0=Math.floor(top/256),x1=Math.floor((left+W/sc)/256),y1=Math.floor((top+H/sc)/256);
   g.imageSmoothingEnabled=true;
@@ -521,7 +541,7 @@ addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("drawer").hidden)openMenu
 
 document.addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const d=b.dataset;
   if(d.t){when=d.t;renderControls();if(pt)renderSheet();if(!$("drawer").hidden)renderDrawer();return}
-  if(d.layer){layer=d.layer;store.set("elkLayer",layer);renderControls();draw();return}
+  if(d.layer){layer=d.layer;store.set("elkLayer",layer);renderControls();$("attrib").textContent="Map: "+srcOf(layer).by;draw();return}
   if(d.p){sel[d.p]=!sel[d.p];if(!Object.values(sel).some(Boolean))sel[d.p]=true;store.set("elkPlants2",sel);renderControls();if(pt)renderSheet();return}
   if(d.act==="close"){pt=null;token++;draw();renderSheet();return}
   if(d.act==="copy"){const v=d.v;const ok=()=>toast("Copied "+v+". Paste it into Gaia or onX search."),no=()=>toast(v,5000);try{navigator.clipboard.writeText(v).then(ok,no)}catch(err){no()}return}
@@ -539,9 +559,12 @@ async function download(){
   if(dlRunning){dlStop=true;return}
   if(!("caches" in window)){toast("This browser can't save maps offline");return}
   const urls=[];const topoMax=$("dlDetail").checked?15:14;
-  for(let z=9;z<=topoMax;z++)for(const[a,b,c]of tilesIn(z))urls.push(tpl(SRC.topo.url,a,b,c));
+  const workingSrc=async l=>{for(let i=active[l];i<SRC[l].list.length;i++){const u=tpl(SRC[l].list[i].url,12,698,1420);try{const r=await fetchT(u,{mode:"no-cors"},8000);if(r.ok||r.type==="opaque")return SRC[l].list[i]}catch(e){}}return SRC[l].list[0]};
+  $("dlNote").textContent="Checking which map server is answering…";
+  const topoSrc=await workingSrc("topo"),photoSrc=await workingSrc("photo");
+  for(let z=9;z<=Math.min(topoMax,topoSrc.max);z++)for(const[a,b,c]of tilesIn(z))urls.push(tpl(topoSrc.url,a,b,c));
   for(const[a,b,c]of tilesIn(ZT))urls.push(tpl(TERRAIN,a,b,c));
-  if($("dlPhoto").checked){for(let z=12;z<=ZP;z++)for(const[a,b,c]of tilesIn(z))urls.push(tpl(SRC.photo.url,a,b,c))}
+  if($("dlPhoto").checked){for(let z=12;z<=ZP;z++)for(const[a,b,c]of tilesIn(z))urls.push(tpl(photoSrc.url,a,b,c))}
   try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
   const cache=await caches.open("elk-tiles");dlRunning=true;dlStop=false;$("dlBtn").textContent="Stop download";$("dlProg").hidden=false;
   let done=0,fail=0;const total=urls.length;const bar=$("dlProg").firstElementChild;
@@ -566,7 +589,7 @@ addEventListener("resize",()=>{resize();refreshOwn()});
 $("date").value=todayStr();
 {const s=sunTimes(todayStr()),n=new Date(),m=n.getHours()*60+n.getMinutes();when=(m<s.rise+120||m>s.set+60)?"dawn":m<s.set-150?"midday":"evening"}
 $("own").setAttribute("aria-pressed",ownOn);
-renderControls();renderSheet();resize();netState();
+renderControls();renderSheet();resize();netState();$("attrib").textContent="Map: "+srcOf(layer).by;
 </script>
 </body>
 </html>

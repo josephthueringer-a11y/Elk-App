@@ -2,7 +2,7 @@
 // - Keeps the app itself on the phone.
 // - Keeps every topo, aerial and terrain tile you have viewed or downloaded,
 //   so the map and tap reports work with no cell service.
-const APP = "elk-spots-v3";
+const APP = "elk-spots-v4";
 const TILES = "elk-tiles";
 const CORE = ["./", "./index.html", "./manifest.json", "./apple-touch-icon.png", "./icon-192.png", "./icon-512.png"];
 
@@ -20,17 +20,20 @@ self.addEventListener("activate", e => {
 
 const isTile = u =>
   (u.hostname === "basemap.nationalmap.gov" && u.pathname.includes("/tile/")) ||
+  (u.hostname === "server.arcgisonline.com" && u.pathname.includes("/tile/")) ||
+  u.hostname.endsWith("tile.opentopomap.org") ||
   (u.hostname === "elevation-tiles-prod.s3.amazonaws.com") ||
   (u.hostname === "s3.amazonaws.com" && u.pathname.startsWith("/elevation-tiles-prod/"));
 const isFont = u => u.hostname.endsWith("googleapis.com") || u.hostname.endsWith("gstatic.com");
 
+const timed = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 async function tileFetch(req) {
   const hit = await caches.match(req.url);
   if (hit) return hit;
   let res = null;
-  try { res = await fetch(req.url, { mode: "cors" }); } catch (e) { res = null; }
+  try { res = await timed(fetch(req.url, { mode: "cors" }), 8000); } catch (e) { res = null; }
   if (!res || !res.ok) {
-    try { res = await fetch(req.url, { mode: "no-cors" }); } catch (e) { return new Response("", { status: 504 }); }
+    try { res = await timed(fetch(req.url, { mode: "no-cors" }), 8000); } catch (e) { return new Response("", { status: 504 }); }
   }
   if (res && (res.ok || res.type === "opaque")) {
     const copy = res.clone();
