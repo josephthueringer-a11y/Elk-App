@@ -2,9 +2,9 @@
 // - Keeps the app itself on the phone.
 // - Keeps every topo, aerial and terrain tile you have viewed or downloaded,
 //   so the map and tap reports work with no cell service.
-const APP = "elk-spots-v9";
+const APP = "elk-spots-v12";
 const TILES = "elk-tiles-2";
-const CORE = ["./", "./index.html", "./manifest.json", "./apple-touch-icon.png", "./icon-192.png", "./icon-512.png"];
+const CORE = ["./", "./index.html", "./app.html", "./manifest.json", "./apple-touch-icon.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(APP).then(c => c.addAll(CORE)));
@@ -31,11 +31,11 @@ async function tileFetch(req) {
   const hit = await caches.match(req.url);
   if (hit) return hit;
   let res = null;
-  try { res = await timed(fetch(req.url, { mode: "cors" }), 8000); } catch (e) { res = null; }
+  try { res = await timed(fetch(req.url, { mode: "cors" }), 20000); } catch (e) { res = null; }
   if (res && !res.ok) return res; // e.g. 404 "no detail here": pass it on, never save it
   if (!res) {
     // Server didn't allow a readable request; fetch it for display only.
-    try { res = await timed(fetch(req.url, { mode: "no-cors" }), 8000); } catch (e) { return new Response("", { status: 504 }); }
+    try { res = await timed(fetch(req.url, { mode: "no-cors" }), 20000); } catch (e) { return new Response("", { status: 504 }); }
   }
   if (res && (res.ok || res.type === "opaque")) {
     const copy = res.clone();
@@ -73,7 +73,7 @@ self.addEventListener("fetch", e => {
   if (req.method !== "GET") return;
   const u = new URL(req.url);
   if (isTile(u)) { e.respondWith(tileFetch(req)); return; }
-  if (u.origin === self.location.origin && (req.mode === "navigate" || u.pathname.endsWith("/") || u.pathname.endsWith("/index.html"))) { e.respondWith(pageFetch(req)); return; }
+  if (u.origin === self.location.origin && (req.mode === "navigate" || u.pathname.endsWith("/") || u.pathname.endsWith(".html"))) { e.respondWith(pageFetch(req)); return; }
   if (u.origin === self.location.origin || isFont(u)) { e.respondWith(appFetch(req)); return; }
   // Live lookups (land owner, burns, logging, sightings) go straight to the network.
 });
